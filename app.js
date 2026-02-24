@@ -318,12 +318,18 @@ function renderChapters(chapters) {
     const divider = tab.previousElementSibling; // the "|" divider
     const list = $("chapters-list");
 
+    const chapterOpt = $("opt-chapter-summary");
     if (!chapters || chapters.length === 0) {
         tab.style.display = "none";
         divider.style.display = "none";
+        chapterOpt.checked = false;
+        chapterOpt.disabled = true;
+        chapterOpt.parentElement.classList.add("disabled");
         return;
     }
 
+    chapterOpt.disabled = false;
+    chapterOpt.parentElement.classList.remove("disabled");
     tab.style.display = "";
     divider.style.display = "";
     list.innerHTML = "";
