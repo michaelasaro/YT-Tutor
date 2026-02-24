@@ -1,5 +1,7 @@
 # YT-Tutor
 
+**[Try it live →](https://yt-tutor.up.railway.app/)**
+
 Watch YouTube videos side-by-side with your AI tutor. Auto-fetches transcripts, chapters, and metadata so your AI has full context for deeper discussions.
 
 This tool assembles the right context for you to paste into Claude (or any AI). No API key needed — you use your existing Claude subscription.
