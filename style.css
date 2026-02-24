@@ -109,6 +109,12 @@ body {
     background: var(--accent-muted);
 }
 
+#info-btn {
+    width: auto;
+    height: 35px;
+    aspect-ratio: 1;
+}
+
 
 /* ---- Main Layout ---- */
 
