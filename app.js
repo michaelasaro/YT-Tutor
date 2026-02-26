@@ -28,6 +28,7 @@ const state = {
     initSent: false,
     questionLog: [],         // { timestamp: "1:23", question: "...", askedAt: Date }
     theatreMode: false,
+    workflowMode: null,      // "split" | "single" | null (not yet chosen)
 };
 
 let ytPlayer = null;
@@ -339,6 +340,9 @@ function renderChapters(chapters) {
         link.className = "chapter-link";
         link.dataset.start = ch.start_time;
         link.dataset.end = ch.end_time;
+        link.setAttribute("role", "button");
+        link.setAttribute("tabindex", "0");
+        link.setAttribute("aria-label", `${ch.timestamp} — ${ch.title}`);
 
         const time = document.createElement("span");
         time.className = "chapter-time";
@@ -347,10 +351,14 @@ function renderChapters(chapters) {
 
         link.appendChild(document.createTextNode(ch.title));
 
-        link.addEventListener("click", () => {
+        const seekToChapter = () => {
             if (ytPlayer && ytPlayer.seekTo) {
                 ytPlayer.seekTo(ch.start_time, true);
             }
+        };
+        link.addEventListener("click", seekToChapter);
+        link.addEventListener("keydown", (e) => {
+            if (e.key === "Enter" || e.key === " ") { e.preventDefault(); seekToChapter(); }
         });
 
         list.appendChild(link);
@@ -424,6 +432,8 @@ function renderTranscript(data) {
         const div = document.createElement("div");
         div.className = "transcript-entry";
         div.dataset.time = entry.time;
+        div.setAttribute("role", "button");
+        div.setAttribute("tabindex", "0");
 
         if (entry.timestamp) {
             const ts = document.createElement("span");
@@ -434,10 +444,14 @@ function renderTranscript(data) {
 
         div.appendChild(document.createTextNode(entry.text));
 
-        div.addEventListener("click", () => {
+        const seekToTime = () => {
             if (ytPlayer && ytPlayer.seekTo) {
                 ytPlayer.seekTo(entry.time, true);
             }
+        };
+        div.addEventListener("click", seekToTime);
+        div.addEventListener("keydown", (e) => {
+            if (e.key === "Enter" || e.key === " ") { e.preventDefault(); seekToTime(); }
         });
 
         container.appendChild(div);
@@ -445,6 +459,7 @@ function renderTranscript(data) {
 
     // Enable buttons
     $("copy-init-btn").disabled = false;
+    $("copy-context-btn").disabled = false;
 
     // Update init preview if visible
     updateInitPreview();
@@ -566,18 +581,33 @@ function toggleInitPreview() {
 
 // ---- Info Modal ----
 
+let _modalPreviousFocus = null;
+
 function openInfoModal() {
+    _modalPreviousFocus = document.activeElement;
     $("info-modal-overlay").style.display = "flex";
     document.addEventListener("keydown", infoModalKeyHandler);
+    $("info-modal-close").focus();
 }
 
 function closeInfoModal() {
     $("info-modal-overlay").style.display = "none";
     document.removeEventListener("keydown", infoModalKeyHandler);
+    if (_modalPreviousFocus) { _modalPreviousFocus.focus(); _modalPreviousFocus = null; }
 }
 
 function infoModalKeyHandler(e) {
-    if (e.key === "Escape") closeInfoModal();
+    if (e.key === "Escape") { closeInfoModal(); return; }
+    // Trap focus within modal
+    if (e.key === "Tab") {
+        const modal = $("info-modal");
+        const focusable = modal.querySelectorAll('a[href], button, [tabindex]:not([tabindex="-1"])');
+        if (focusable.length === 0) return;
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+        else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    }
 }
 
 
@@ -593,6 +623,57 @@ function toggleTheatreMode() {
     // Reset custom resize sizes when switching modes
     $("main").style.gridTemplateColumns = "";
     $("main").style.gridTemplateRows = "";
+}
+
+
+// ---- Workflow Mode ----
+
+function setWorkflowMode(mode) {
+    state.workflowMode = mode;
+}
+
+function submitWorkflow() {
+    const mode = state.workflowMode;
+    if (!mode) {
+        alert("Please select how you are working (split screen or single screen).");
+        return;
+    }
+    localStorage.setItem("workflowMode", mode);
+
+    // Switch to the appropriate discussion tab
+    switchDiscussionTab(mode === "split" ? "timestamp" : "notebook");
+
+    // Auto-collapse the workflow section
+    if (!$("workflow-body").classList.contains("collapsed")) {
+        toggleSection("workflow");
+    }
+}
+
+function restoreWorkflowMode() {
+    const saved = localStorage.getItem("workflowMode");
+    if (saved) {
+        state.workflowMode = saved;
+        const radio = document.querySelector(`input[name="workflow-mode"][value="${saved}"]`);
+        if (radio) radio.checked = true;
+        // Set the default discussion tab based on saved preference
+        switchDiscussionTab(saved === "split" ? "timestamp" : "notebook");
+    }
+}
+
+function switchDiscussionTab(tab) {
+    const tabs = document.querySelectorAll(".discussion-tab");
+    tabs.forEach(t => {
+        const isActive = t.dataset.tab === tab;
+        t.classList.toggle("active", isActive);
+        t.setAttribute("aria-selected", isActive);
+    });
+
+    $("discussion-timestamp").style.display = tab === "timestamp" ? "" : "none";
+    $("discussion-notebook").style.display = tab === "notebook" ? "" : "none";
+
+    // Show notebook action buttons only on the notebook tab
+    const actions = document.querySelector("#discussion-notebook .panel-actions");
+    if (actions) actions.style.display = tab === "notebook" ? "" : "none";
 }
 
 
@@ -625,6 +706,8 @@ function toggleSection(name) {
 
 function restoreCollapseStates() {
     const saved = JSON.parse(localStorage.getItem("collapseStates") || "{}");
+    // Always start with init expanded since no video is loaded on refresh
+    delete saved["init"];
     for (const [name, collapsed] of Object.entries(saved)) {
         const body = $(name + "-body");
         const icon = $(name + "-collapse-icon");
@@ -757,15 +840,11 @@ async function copyToClipboard(text) {
     }
 }
 
-function showCopyNotice(elementId, duration = 5000, fade = 1000) {
-    const el = $(elementId);
-    el.style.display = "inline";
-    el.style.opacity = "1";
-    el.style.transition = "none";
-    // Force reflow so the transition reset takes effect
-    void el.offsetWidth;
-    el.style.transition = `opacity ${fade}ms ease`;
-    setTimeout(() => { el.style.opacity = "0"; }, duration);
+function showCopyNotice() {
+    const el = $("copy-toast");
+    el.classList.add("visible");
+    clearTimeout(el._timer);
+    el._timer = setTimeout(() => { el.classList.remove("visible"); }, 2000);
 }
 
 
@@ -815,9 +894,9 @@ function deleteLogEntry(index) {
     updateNotebookBadge();
     if (state.questionLog.length === 0) {
         $("copy-log-btn").disabled = true;
-        $("copy-log-btn").className = "btn-small";
+        $("copy-log-btn").className = "btn-secondary";
         $("export-log-btn").disabled = true;
-        $("export-log-btn").className = "btn-small";
+        $("export-log-btn").className = "btn-secondary";
     }
 }
 
@@ -874,9 +953,9 @@ function updateNotebookBadge() {
 
 function enableLogButtons() {
     $("copy-log-btn").disabled = false;
-    $("copy-log-btn").className = "btn-small active";
+    $("copy-log-btn").className = "btn-secondary";
     $("export-log-btn").disabled = false;
-    $("export-log-btn").className = "btn-small active";
+    $("export-log-btn").className = "btn-secondary";
 }
 
 async function copyFullLog() {
@@ -892,7 +971,7 @@ async function copyFullLog() {
 
     const ok = await copyToClipboard(msg.trim());
     if (ok) {
-        showCopyNotice("context-copy-notice");
+        showCopyNotice();
     }
 }
 
@@ -933,8 +1012,8 @@ async function loadVideo() {
     $("title-row").style.display = "none";
     $("current-chapter").textContent = "";
     $("chapter-row").style.display = "none";
-    $("init-status").style.display = "none";
     $("copy-init-btn").disabled = true;
+    $("copy-context-btn").disabled = true;
     $("init-preview").style.display = "none";
     // Expand init section for new video
     $("init-body").classList.remove("collapsed");
@@ -943,9 +1022,9 @@ async function loadVideo() {
     $("notebook-input").value = "";
     $("notebook-log").innerHTML = '<div id="log-empty" class="log-placeholder">Notes and questions will appear here with timestamps.</div>';
     $("copy-log-btn").disabled = true;
-    $("copy-log-btn").className = "btn-small";
+    $("copy-log-btn").className = "btn-secondary";
     $("export-log-btn").disabled = true;
-    $("export-log-btn").className = "btn-small";
+    $("export-log-btn").className = "btn-secondary";
     $("notebook-count").style.display = "none";
     // Reset tabs to transcript view and hide chapters tab
     switchTab("transcript");
@@ -974,6 +1053,25 @@ async function loadVideo() {
     }
 }
 
+const chatbotUrls = {
+    claude: "https://claude.ai/new",
+    chatgpt: "https://chatgpt.com/",
+    gemini: "https://gemini.google.com/app",
+    copilot: "https://copilot.microsoft.com/",
+};
+
+function getSelectedChatbot() {
+    const selected = document.querySelector('input[name="ai-chatbot"]:checked');
+    return selected ? selected.value : "none";
+}
+
+function openSelectedChatbot() {
+    const chatbot = getSelectedChatbot();
+    if (chatbot !== "none" && chatbotUrls[chatbot]) {
+        window.open(chatbotUrls[chatbot], "_blank");
+    }
+}
+
 async function copyInitMessage() {
     // Check for manual transcript paste
     if (!state.transcript) {
@@ -993,7 +1091,8 @@ async function copyInitMessage() {
 
     if (ok) {
         state.initSent = true;
-        showCopyNotice("init-status");
+        showCopyNotice();
+        openSelectedChatbot();
         // Auto-collapse since it's no longer needed
         toggleSection('init');
     }
@@ -1009,7 +1108,7 @@ async function copyContext() {
 
     const ok = await copyToClipboard(msg);
     if (ok) {
-        showCopyNotice("context-copy-notice");
+        showCopyNotice();
     }
 }
 
@@ -1070,6 +1169,9 @@ loadInitOptions();
 
 // Restore collapse states from localStorage
 restoreCollapseStates();
+
+// Restore workflow mode preference
+restoreWorkflowMode();
 
 // Handle manual transcript paste
 $("transcript-paste").addEventListener("input", () => {

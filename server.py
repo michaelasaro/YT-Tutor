@@ -15,8 +15,10 @@ No API key needed - this just serves the frontend and fetches transcripts.
 You'll copy the prepared context into Claude yourself.
 """
 
+import html
 import re
 import subprocess
+import traceback
 from flask import Flask, request, jsonify, send_from_directory
 
 try:
@@ -90,8 +92,8 @@ def get_transcript():
                 best_score, best_manual, best = candidates[0]
                 target_transcript = best
                 transcript_type = "manual" if best_manual else "auto-generated"
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"Warning: Could not list transcripts: {e}")
 
         # Fetch transcript — use selected one or fall back to default fetch
         if target_transcript is not None:
@@ -103,12 +105,13 @@ def get_transcript():
         plain_lines = []
         for entry in transcript.snippets:
             ts = format_timestamp(entry.start)
+            text = html.unescape(entry.text)
             entries.append({
                 "time": entry.start,
                 "timestamp": ts,
-                "text": entry.text,
+                "text": text,
             })
-            plain_lines.append(f"[{ts}] {entry.text}")
+            plain_lines.append(f"[{ts}] {text}")
 
         # Get metadata from yt-dlp
         title = ""
@@ -152,8 +155,8 @@ def get_transcript():
                     "transcript_type": transcript_type,
                     "heatmap": info.get("heatmap", []),
                 }
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"Warning: Could not fetch metadata via yt-dlp: {e}")
 
         return jsonify({
             "video_id": video_id,
@@ -165,9 +168,18 @@ def get_transcript():
         })
 
     except Exception as e:
-        return jsonify({"error": f"Could not fetch transcript: {str(e)}"}), 400
+        traceback.print_exc()
+        error_msg = str(e)
+        # Extract a clean reason from youtube-transcript-api's verbose errors
+        if "unplayable" in error_msg.lower():
+            reason_match = re.search(r"for the following reason:\s*(.+?)(?:\n|If you are sure)", error_msg, re.DOTALL)
+            if reason_match:
+                error_msg = f"Video is not accessible: {reason_match.group(1).strip()}"
+        elif "no transcripts" in error_msg.lower() or "could not retrieve" in error_msg.lower():
+            error_msg = "No transcript available for this video."
+        return jsonify({"error": error_msg}), 400
 
 
 if __name__ == "__main__":
-    print("\n  VideoTutor running at http://localhost:5000\n")
+    print("\n  YT-Tutor running at http://localhost:5000\n")
     app.run(port=5000, debug=True)
